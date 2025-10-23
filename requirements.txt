@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+pydantic
+pydantic-settings
+motor           # Driver asíncrono para MongoDB
+passlib[bcrypt]
+python-jose[cryptography]
+alembic         # Para migraciones de PostgreSQL
