@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
-from app.api.endpoints import auth, users, devices
+from app.api.endpoints import auth, users, devices, energy
 from fastapi.middleware.cors import CORSMiddleware
 # Evento de ciclo de vida para conectar y desconectar MongoDB al iniciar/apagar
 @asynccontextmanager
@@ -35,6 +35,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api", tags=["Auth"])
 app.include_router(users.router, prefix="/api", tags=["Users & Companies"])
 app.include_router(devices.router, prefix="/api", tags=["Devices"])
+app.include_router(energy.router, prefix="/api/energy", tags=["Energy Data"])
 
 @app.get("/api/health")
 def health_check():
