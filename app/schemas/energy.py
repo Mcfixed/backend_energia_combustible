@@ -102,3 +102,15 @@ class DeviceSummary(BaseModel):
     class Config:
         populate_by_name = True # Permite usar '_id' en lugar de 'id'
         json_encoders = {Oid: lambda v: v.oid if isinstance(v, Oid) else str(v)}
+
+class DailyConsumptionPoint(BaseModel):
+    """Representa el consumo total de un solo día."""
+    date: str       # Formato "DD-MM" o "YYYY-MM-DD"
+    consumption: float  # Consumo en kWh
+
+class DeviceDetailsResponse(BaseModel):
+    """La respuesta completa para la vista de detalles."""
+    deviceInfo: DeviceInfo
+    dailyConsumption: List[DailyConsumptionPoint]
+    totalConsumption: float
+    avgDailyConsumption: float

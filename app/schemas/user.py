@@ -1,11 +1,19 @@
 from pydantic import BaseModel, EmailStr
 from app.models.association import UserRole
+from typing import Optional
 
 class UserBase(BaseModel):
     email: EmailStr
 
 class UserCreate(UserBase):
     password: str
+class UserUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None
+    is_active: Optional[bool] = None
+    
+    class Config:
+        from_attributes = True    
 
 class User(UserBase):
     id: int
@@ -23,4 +31,5 @@ class UserRoleInCompany(BaseModel):
     role: UserRole
 
     class Config:
-        from_attributes = True    
+        from_attributes = True 
+           
