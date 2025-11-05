@@ -68,15 +68,33 @@ class HistoricalDataPoint(BaseModel):
     value: float
 
 class DeviceHistoricalData(BaseModel):
-    consumption: List[HistoricalDataPoint]
-    voltage: List[HistoricalDataPoint]
-    current: List[HistoricalDataPoint]
-    power: List[HistoricalDataPoint]
-    powerFactor: List[HistoricalDataPoint]
-    frequency: List[HistoricalDataPoint]
-    thd: List[HistoricalDataPoint]
-    reactivePower: List[HistoricalDataPoint]
-    apparentPower: List[HistoricalDataPoint]
+    consumption: List[HistoricalDataPoint]= []
+    voltage: List[HistoricalDataPoint]= []
+    current: List[HistoricalDataPoint]= []
+    power: List[HistoricalDataPoint]= []
+    powerFactor: List[HistoricalDataPoint]= []
+    frequency: List[HistoricalDataPoint]= []
+    thd: List[HistoricalDataPoint]= []
+    reactivePower: List[HistoricalDataPoint]= []
+    apparentPower: List[HistoricalDataPoint]= []
+    apparentEnergy: List[HistoricalDataPoint]= []
+    reactiveEnergy: List[HistoricalDataPoint]= []
+    
+    power_a: List[HistoricalDataPoint] = []
+    voltage_a: List[HistoricalDataPoint] = []
+    current_a: List[HistoricalDataPoint] = []
+    powerFactor_a: List[HistoricalDataPoint] = []
+    reactivePower_a: List[HistoricalDataPoint] = []
+    apparentPower_a: List[HistoricalDataPoint] = []
+    thd_i_a: List[HistoricalDataPoint] = []
+    thd_u_a: List[HistoricalDataPoint] = []
+    apparentEnergy_a: List[HistoricalDataPoint] = []
+    reactiveEnergy_a: List[HistoricalDataPoint] = []
+    activeEnergy_a: List[HistoricalDataPoint] = []
+    activePower_a: List[HistoricalDataPoint] = []
+    reactiveEnergy_a: List[HistoricalDataPoint] = []
+    
+    
 
 class DeviceAlert(BaseModel):
     id: int
@@ -101,10 +119,18 @@ class DailyConsumptionPoint(BaseModel):
     """Representa el consumo total de un solo día."""
     date: str
     consumption: float  
-
+class MonthlyConsumptionPoint(BaseModel):
+    """Representa el consumo total de un solo mes."""
+    date: str   
+    month_name: str 
+    consumption: float
+    
 class DeviceDetailsResponse(BaseModel):
     """La respuesta completa para la vista de detalles."""
     deviceInfo: DeviceInfo
+    price_kwh: float
     dailyConsumption: List[DailyConsumptionPoint]
-    totalConsumption: float
+    totalConsumptionLast30Days: float
     avgDailyConsumption: float
+    
+    monthlyConsumption: List[MonthlyConsumptionPoint]

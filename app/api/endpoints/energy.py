@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorCollection
 from typing import List
 import pymongo
 import random
-
+import calendar
 from app.db.database import get_db
 from app.db import mongodb
 from app.core.config import settings
@@ -16,12 +16,60 @@ from app.models import user as user_model
 from app.models import center as center_model
 from app.models.association import UserCompany
 from app.models.device import Device, DeviceType
-from app.schemas.energy import DeviceSummary, HistoricalDataPoint, DeviceHistoricalData, DeviceAlert, DailyConsumptionPoint, DeviceDetailsResponse, DeviceInfo
+from app.schemas.energy import DeviceSummary, HistoricalDataPoint, DeviceHistoricalData, DeviceAlert, DailyConsumptionPoint, DeviceDetailsResponse, DeviceInfo, MonthlyConsumptionPoint
+from app.schemas.center import CenterPriceUpdate
 from enum import Enum
 
 CHILE_TZ = pytz.timezone("America/Santiago")
 
 router = APIRouter()
+ALL_HISTORICAL_FIELDS = {
+    "consumption": "object.agg_activeEnergy", # Acumulado
+    "power": "object.agg_activePower",
+    "voltage": "object.agg_voltage",
+    "current": "object.agg_current",
+    "powerFactor": "object.agg_powerFactor",
+    "frequency": "object.agg_frequency",
+    "reactivePower": "object.agg_reactivePower",
+    "apparentPower": "object.agg_apparentPower",
+    "thd": "object.agg_thdI", 
+    "apparentEnergy": "object.agg_apparentEnergy",
+    "reactiveEnergy": "object.agg_reactiveEnergy",
+    
+    
+    # --- Campos por Fase, se comentaran las fases restantes porque todas son monofasicas ---
+    "power_a": "object.phaseA_activePower",
+    "voltage_a": "object.phaseA_voltage",
+    "current_a": "object.phaseA_current",
+    "powerFactor_a": "object.phaseA_powerFactor",
+    "reactivePower_a": "object.phaseA_reactivePower",
+    "apparentPower_a": "object.phaseA_apparentPower",
+    "thd_i_a": "object.phaseA_thdI",
+    "thd_u_a": "object.phaseA_thdU",
+    "apparentEnergy_a": "object.phaseA_apparentEnergy",
+    "reactiveEnergy_a": "object.phaseA_reactiveEnergy",
+    "activeEnergy_a": "object.phaseA_activeEnergy",
+    "activePower_a": "object.phaseA_activePower",
+    "reactiveEnergy_a": "object.phaseA_reactiveEnergy",
+
+    #"power_b": "object.phaseB_activePower",
+    #"power_c": "object.phaseC_activePower",
+    #"voltage_b": "object.phaseB_voltage",
+    #"voltage_c": "object.phaseC_voltage",
+    #"current_b": "object.phaseB_current",
+    #"current_c": "object.phaseC_current",
+    #"powerFactor_b": "object.phaseB_powerFactor",
+    #"powerFactor_c": "object.phaseC_powerFactor",
+    #"reactivePower_b": "object.phaseB_reactivePower",
+    #"reactivePower_c": "object.phaseC_reactivePower",
+    #"apparentPower_b": "object.phaseB_apparentPower",
+    #"apparentPower_c": "object.phaseC_apparentPower",
+    # #"thd_i_b": "object.phaseB_thdI",
+    #"thd_i_c": "object.phaseC_thdI",
+    #"thd_u_b": "object.phaseB_thdU",
+    #"thd_u_c": "object.phaseC_thdU",
+    
+}
 
 def _generate_mock_monthly_data(device_number: int) -> DeviceHistoricalData:
     base_data = {
@@ -123,10 +171,7 @@ async def get_energy_summary(
 
             
         start_time = end_time - datetime.timedelta(days=days_to_query)
-
-        projection = {
-            "time": 1,
-            "object.agg_activePower": 1,
+        """ "object.agg_activePower": 1,
             "object.agg_voltage": 1,
             "object.agg_current": 1,
             "object.agg_powerFactor": 1,
@@ -137,8 +182,18 @@ async def get_energy_summary(
             "object.agg_activeEnergy": 1,
             "object.phaseA_activeEnergy": 1,
             "object.phaseB_activeEnergy": 1,
-            "object.phaseC_activeEnergy": 1
+            "object.phaseC_activeEnergy": 1 """
+        projection = {
+            "time": 1,
+            
         }
+        for field_path in ALL_HISTORICAL_FIELDS.values():
+            projection[field_path] = 1
+        
+        projection["object.agg_activeEnergy"] = 1
+        projection["object.phaseA_activeEnergy"] = 1
+        projection["object.phaseB_activeEnergy"] = 1
+        projection["object.phaseC_activeEnergy"] = 1
         
         historical_cursor = mongo_collection.find(
             {
@@ -151,10 +206,7 @@ async def get_energy_summary(
 
         historical_docs = await historical_cursor.to_list(length=None) 
 
-        daily_data_raw = {
-            "consumption": [], "voltage": [], "current": [], "power": [],
-            "powerFactor": [], "frequency": [], "thd": [], "reactivePower": [], "apparentPower": []
-        }
+        daily_data_raw = {field_key: [] for field_key in ALL_HISTORICAL_FIELDS.keys()}
 
         for doc in historical_docs:
             try:
@@ -172,15 +224,11 @@ async def get_energy_summary(
                 
                 obj = doc.get("object", {})
                 
-                daily_data_raw["consumption"].append({"time": time_str, "value": obj.get("agg_activeEnergy", 0)})
-                daily_data_raw["power"].append({"time": time_str, "value": obj.get("agg_activePower", 0)})
-                daily_data_raw["voltage"].append({"time": time_str, "value": obj.get("agg_voltage", 0)})
-                daily_data_raw["current"].append({"time": time_str, "value": obj.get("agg_current", 0)})
-                daily_data_raw["powerFactor"].append({"time": time_str, "value": obj.get("agg_powerFactor", 0)})
-                daily_data_raw["frequency"].append({"time": time_str, "value": obj.get("agg_frequency", 0)})
-                daily_data_raw["thd"].append({"time": time_str, "value": obj.get("phaseA_thdI", 0)})
-                daily_data_raw["reactivePower"].append({"time": time_str, "value": obj.get("agg_reactivePower", 0)})
-                daily_data_raw["apparentPower"].append({"time": time_str, "value": obj.get("agg_apparentPower", 0)})
+                for field_key, field_path in ALL_HISTORICAL_FIELDS.items():
+
+                    key_in_obj = field_path.split('.', 1)[1]
+                    value = obj.get(key_in_obj, 0)
+                    daily_data_raw[field_key].append({"time": time_str, "value": value})
             except Exception:
                 continue
         
@@ -279,30 +327,187 @@ async def get_energy_summary(
 @router.get(
     "/details/{dev_eui}",
     response_model=DeviceDetailsResponse,
-    summary="Obtiene los detalles de consumo diario de un dispositivo"
+    summary="Obtiene los detalles de consumo diario Y mensual de un dispositivo"
 )
 async def get_device_details(
     dev_eui: str,
-    days: int = Query(30, description="Número de días de historial a consultar"),
+    days: int = Query(30, description="Número de días para el gráfico diario"),
     db: Session = Depends(get_db),
     current_user: user_model.User = Depends(get_current_active_user)
 ):
     """
-    Este endpoint calcula el consumo de energía DIARIO para un dispositivo,
-    manejando el valor incremental 'agg_activeEnergy' Y LOS REINICIOS DEL CONTADOR.
-    
-    Utiliza una agregación de MongoDB para:
-    1. Agrupar lecturas por día (en zona horaria de Chile).
-    2. Obtener un array con TODAS las lecturas de 'agg_activeEnergy' de ese día.
-    
-    Luego, en Python, procesa cada array diario para:
-    1. Calcular los "deltas" entre lecturas consecutivas.
-    2. Manejar deltas negativos (reinicios) sumando solo la lectura actual.
-    3. Sumar todos los deltas positivos para obtener el consumo diario.
+    Este endpoint calcula el consumo de energía DIARIO (últimos 30 días)
+    Y MENSUAL (últimos 12 meses) para un dispositivo, 
+    manejando los reinicios del contador.
     """
     
     mongo_collection = mongodb.db_energy[settings.MONGO_COLLECTION_NAME]
 
+    # --- 1. Verificación de Seguridad (Queda igual) ---
+    user_company_links = db.query(UserCompany).filter(
+        UserCompany.user_id == current_user.id
+    ).all()
+    if not user_company_links:
+        raise HTTPException(status_code=403, detail="Usuario no asociado a ninguna empresa")
+
+    allowed_company_ids = [link.company_id for link in user_company_links]
+    device_pg = db.query(Device).join(center_model.Center).filter(
+        Device.dev_eui == dev_eui,
+        center_model.Center.company_id.in_(allowed_company_ids)
+    ).first()
+
+    if not device_pg:
+        raise HTTPException(status_code=404, detail="Dispositivo no encontrado o sin permisos")
+    price_from_db = device_pg.center.price_kwh if device_pg.center else 250.0
+    
+    # --- 2. Lógica de Agregación DIARIA (Últimos 'days' días) ---
+    
+    end_time_utc = datetime.datetime.now(pytz.utc)
+    start_time_daily_utc = end_time_utc - datetime.timedelta(days=days)
+
+    pipeline_daily = [
+        {"$match": {
+            "deviceInfo.devEui": dev_eui,
+            "time": {"$gte": start_time_daily_utc, "$lte": end_time_utc},
+            "object.agg_activeEnergy": {"$exists": True}
+        }},
+        {"$project": {
+            "time": "$time", "energy": "$object.agg_activeEnergy",
+            "date_chile": {"$dateToString": {
+                "format": "%Y-%m-%d", "date": "$time", "timezone": "America/Santiago"
+            }}
+        }},
+        {"$sort": {"time": 1}},
+        {"$group": {"_id": "$date_chile", "readings": {"$push": "$energy"}}},
+        {"$sort": {"_id": 1}}
+    ]
+
+    cursor_daily = mongo_collection.aggregate(pipeline_daily)
+    daily_results = await cursor_daily.to_list(length=None)
+
+    # --- Procesamiento Python para datos DIARIOS ---
+    daily_consumption_list = []
+    total_consumption_kwh_30days = 0
+    
+    for doc in daily_results:
+        readings_list = doc.get("readings", [])
+        if len(readings_list) < 2: continue
+        
+        daily_total_wh = 0
+        last_reading = readings_list[0] 
+        for i in range(1, len(readings_list)):
+            current_reading = readings_list[i]
+            delta = current_reading - last_reading
+            if delta < 0:
+                daily_total_wh += current_reading
+            else:
+                daily_total_wh += delta
+            last_reading = current_reading 
+        
+        consumption_kwh = daily_total_wh / 1000.0
+        date_obj = datetime.datetime.strptime(doc["_id"], "%Y-%m-%d")
+        date_str = date_obj.strftime("%d-%m")
+
+        daily_consumption_list.append(DailyConsumptionPoint(
+            date=date_str,
+            consumption=round(consumption_kwh, 2)
+        ))
+        total_consumption_kwh_30days += consumption_kwh
+
+    avg_kwh_30days = total_consumption_kwh_30days / len(daily_consumption_list) if daily_consumption_list else 0
+
+    # --- 3. Lógica de Agregación MENSUAL (Últimos 12 meses) ---
+    
+    start_time_monthly_utc = end_time_utc - datetime.timedelta(days=365)
+    
+    pipeline_monthly = [
+        {"$match": {
+            "deviceInfo.devEui": dev_eui,
+            "time": {"$gte": start_time_monthly_utc, "$lte": end_time_utc},
+            "object.agg_activeEnergy": {"$exists": True}
+        }},
+        {"$project": {
+            "time": "$time", "energy": "$object.agg_activeEnergy",
+            "month_chile": {"$dateToString": {
+                "format": "%Y-%m", "date": "$time", "timezone": "America/Santiago" # <-- Agrupar por mes
+            }}
+        }},
+        {"$sort": {"time": 1}},
+        {"$group": {"_id": "$month_chile", "readings": {"$push": "$energy"}}}, # <-- Agrupar por mes
+        {"$sort": {"_id": 1}}
+    ]
+    
+    cursor_monthly = mongo_collection.aggregate(pipeline_monthly)
+    monthly_results = await cursor_monthly.to_list(length=None)
+
+    # --- Procesamiento Python para datos MENSUALES ---
+    monthly_consumption_list = []
+    
+    # Diccionario para nombres de meses en español
+    month_abbr_es = {
+        1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr", 5: "May", 6: "Jun",
+        7: "Jul", 8: "Ago", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"
+    }
+
+    for doc in monthly_results:
+        readings_list = doc.get("readings", [])
+        if len(readings_list) < 2: continue
+        
+        monthly_total_wh = 0
+        last_reading = readings_list[0] 
+        for i in range(1, len(readings_list)):
+            current_reading = readings_list[i]
+            delta = current_reading - last_reading
+            if delta < 0:
+                monthly_total_wh += current_reading
+            else:
+                monthly_total_wh += delta
+            last_reading = current_reading
+            
+        consumption_kwh = monthly_total_wh / 1000.0
+        date_obj = datetime.datetime.strptime(doc["_id"], "%Y-%m")
+        month_name_str = month_abbr_es.get(date_obj.month, "??")
+
+        monthly_consumption_list.append(MonthlyConsumptionPoint(
+            date=doc["_id"],
+            month_name=f"{month_name_str} {date_obj.year}", # ej: "Oct 2025"
+            consumption=round(consumption_kwh, 2)
+        ))
+
+    device_info_data = {
+        "deviceName": device_pg.name,
+        "devEui": device_pg.dev_eui,
+        "location": f"Centro: {device_pg.center_id}",
+        "applicationName": "N/A", "deviceProfileName": "N/A"
+    }
+    
+    return DeviceDetailsResponse(
+        deviceInfo=DeviceInfo(**device_info_data),
+        price_kwh=price_from_db,
+        dailyConsumption=daily_consumption_list,
+        totalConsumptionLast30Days=round(total_consumption_kwh_30days, 2),
+        avgDailyConsumption=round(avg_kwh_30days, 2),
+        # Datos Mensuales
+        monthlyConsumption=monthly_consumption_list
+    )
+
+
+@router.put(
+    "/price/{dev_eui}",
+    summary="Actualiza el precio de kWh del centro asociado a un dispositivo"
+)
+async def update_center_price_by_device(
+    dev_eui: str,
+    price_data: CenterPriceUpdate, # <-- Recibe el nuevo precio en el body
+    db: Session = Depends(get_db),
+    current_user: user_model.User = Depends(get_current_active_user)
+):
+    """
+    Este endpoint busca un dispositivo por su EUI, encuentra el
+    centro al que pertenece, y actualiza el 'price_kwh' de ESE centro.
+    """
+    
+    # --- 1. Verificación de Seguridad (Reutilizamos la lógica) ---
     user_company_links = db.query(UserCompany).filter(
         UserCompany.user_id == current_user.id
     ).all()
@@ -311,6 +516,7 @@ async def get_device_details(
 
     allowed_company_ids = [link.company_id for link in user_company_links]
 
+    # Hacemos la misma consulta que en 'get_device_details'
     device_pg = db.query(Device)\
         .join(center_model.Center)\
         .filter(
@@ -322,95 +528,20 @@ async def get_device_details(
     if not device_pg:
         raise HTTPException(status_code=404, detail="Dispositivo no encontrado o sin permisos")
     
-    
-    end_time_utc = datetime.datetime.now(pytz.utc)
-    start_time_utc = end_time_utc - datetime.timedelta(days=days)
+    if not device_pg.center:
+         raise HTTPException(status_code=404, detail="Dispositivo no está asociado a ningún centro")
 
-    pipeline = [
-        {
-            "$match": {
-                "deviceInfo.devEui": dev_eui,
-                "time": {"$gte": start_time_utc, "$lte": end_time_utc},
-                "object.agg_activeEnergy": {"$exists": True}
-            }
-        },
-        {
-            "$project": {
-                "time": "$time",
-                "energy": "$object.agg_activeEnergy",
-                "date_chile": {
-                    "$dateToString": {
-                        "format": "%Y-%m-%d",
-                        "date": "$time",
-                        "timezone": "America/Santiago"
-                    }
-                }
-            }
-        },
-        {
-            "$sort": {"time": 1}
-        },
-        {
-            "$group": {
-                "_id": "$date_chile",
-                "readings": {"$push": "$energy"} 
-            }
-        },
-        {
-            "$sort": {"_id": 1}
-        }
-    ]
-
-    cursor = mongo_collection.aggregate(pipeline)
-    daily_results = await cursor.to_list(length=None)
-
-    daily_consumption_list = []
-    total_consumption_kwh = 0
-    
-    for doc in daily_results:
-        readings_list = doc.get("readings", [])
+    # --- 2. Actualizar el Precio ---
+    try:
+        center_to_update = device_pg.center
+        center_to_update.price_kwh = price_data.price_kwh
         
-        if len(readings_list) < 2:
-            continue
-        daily_total_wh = 0
-        last_reading = readings_list[0] 
+        db.add(center_to_update)
+        db.commit()
+        db.refresh(center_to_update)
         
-        for i in range(1, len(readings_list)):
-            current_reading = readings_list[i]
-            
-            delta = current_reading - last_reading
-            
-            if delta < 0:
-                daily_total_wh += current_reading
-            else:
-                daily_total_wh += delta
-                
-            last_reading = current_reading 
+        return {"message": "Precio actualizado correctamente", "new_price": center_to_update.price_kwh}
         
-        consumption_kwh = daily_total_wh / 1000.0
-        
-        date_obj = datetime.datetime.strptime(doc["_id"], "%Y-%m-%d")
-        date_str = date_obj.strftime("%d-%m")
-
-        daily_consumption_list.append(DailyConsumptionPoint(
-            date=date_str,
-            consumption=round(consumption_kwh, 2)
-        ))
-        total_consumption_kwh += consumption_kwh
-
-    avg_kwh = total_consumption_kwh / len(daily_consumption_list) if daily_consumption_list else 0
-
-    device_info_data = {
-        "deviceName": device_pg.name,
-        "devEui": device_pg.dev_eui,
-        "location": f"Centro: {device_pg.center_id}",
-        "applicationName": "N/A",
-        "deviceProfileName": "N/A"
-    }
-    
-    return DeviceDetailsResponse(
-        deviceInfo=DeviceInfo(**device_info_data),
-        dailyConsumption=daily_consumption_list,
-        totalConsumption=round(total_consumption_kwh, 2),
-        avgDailyConsumption=round(avg_kwh, 2)
-    )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al actualizar la base de datos: {e}")

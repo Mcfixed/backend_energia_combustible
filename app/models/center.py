@@ -1,5 +1,5 @@
 # app/models/center.py
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, ForeignKey, Float
 from sqlalchemy.orm import relationship
 from app.db.database import Base
 
@@ -13,3 +13,4 @@ class Center(Base):
     company = relationship("Company", back_populates="centers")
     
     devices = relationship("Device", back_populates="center")
+    price_kwh = Column(Float, nullable=True, server_default="250.0")
