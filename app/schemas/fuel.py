@@ -2,9 +2,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import datetime
-# --- Schemas de MongoDB ---
-# (Basados en tu JSON de ejemplo)
-
 class MongoFuelObject(BaseModel):
     """ 
     Parsea el campo 'object' del JSON de Mongo.
@@ -22,7 +19,7 @@ class MongoFuelObject(BaseModel):
     
     volume_L_S2: float | None = 0
     percentage_S2: float | None = 0
-    pressure_Bar_S2: float | None = 0 # <-- Este era el campo del error
+    pressure_Bar_S2: float | None = 0
     sensor_2_ok: bool = False
 
     class Config:
@@ -43,16 +40,13 @@ class MongoRxInfo(BaseModel):
 class MongoFuelDoc(BaseModel):
     """ Parsea el documento completo de Mongo """
     time: datetime.datetime
-    deviceInfo: dict # No necesitamos parsear esto a fondo
+    deviceInfo: dict
     object: MongoFuelObject
     rxInfo: List[MongoRxInfo] = []
 
     class Config:
         extra = 'ignore'
 
-
-# --- Schemas de Respuesta de la API ---
-# (Basados en tus 'interfaces' de React)
 
 class FuelSensorData(BaseModel):
     """ Coincide con la 'interface SensorData' de React """
@@ -66,19 +60,19 @@ class FuelSensorData(BaseModel):
 
 class FuelTank(BaseModel):
     """ Coincide con la 'interface Tank' de React """
-    id: str # p.ej. "devEui-S0"
+    id: str 
     name: str
     capacity: int
     fuelType: str
     sensor: FuelSensorData
-    centerId: str # El ID del centro de Postgres
+    centerId: str 
 
 class FuelCenter(BaseModel):
     """ Coincide con la 'interface Center' de React """
-    id: str # El ID del centro de Postgres
+    id: str
     name: str
     location: str
-    status: str # 'secure', 'warning', 'danger', etc.
+    status: str
     tanks: List[FuelTank]
     totalCapacity: int
     currentInventory: float

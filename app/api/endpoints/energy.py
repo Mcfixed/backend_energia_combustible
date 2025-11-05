@@ -8,8 +8,6 @@ from typing import List
 import pymongo
 import random
 
-# (Aquí van el resto de tus imports: database, models, schemas, etc.)
-# ...
 from app.db.database import get_db
 from app.db import mongodb
 from app.core.config import settings
@@ -21,7 +19,6 @@ from app.models.device import Device, DeviceType
 from app.schemas.energy import DeviceSummary, HistoricalDataPoint, DeviceHistoricalData, DeviceAlert, DailyConsumptionPoint, DeviceDetailsResponse, DeviceInfo
 from enum import Enum
 
-# --- Definición de la Zona Horaria ---
 CHILE_TZ = pytz.timezone("America/Santiago")
 
 router = APIRouter()
@@ -82,17 +79,15 @@ async def get_energy_summary(
     
     mongo_collection = mongodb.db_energy[settings.MONGO_COLLECTION_NAME]
 
-    # 1. Obtener las empresas del usuario
     user_company_links = db.query(UserCompany).filter(
         UserCompany.user_id == current_user.id
     ).all()
     
     if not user_company_links:
-        return [] # El usuario no está en ninguna empresa
+        return [] 
 
     allowed_company_ids = [link.company_id for link in user_company_links]
 
-    # 2. Obtener todos los dispositivos de Postgres
     devices_from_db = db.query(Device)\
         .join(center_model.Center)\
         .filter(
@@ -103,12 +98,11 @@ async def get_energy_summary(
     
     summary_list = []
 
-    # 3. Para cada dispositivo, obtener su última data de Mongo
     for i, device_pg in enumerate(devices_from_db):
         latest_data_doc = await mongo_collection.find_one(
             {
                 "deviceInfo.devEui": device_pg.dev_eui,
-                "object": { "$type": "object" } # Asegura que tengamos datos
+                "object": { "$type": "object" } 
             },
             sort=[("time", pymongo.DESCENDING)]
         )
@@ -116,10 +110,8 @@ async def get_energy_summary(
         if not latest_data_doc:
             continue
 
-        # 3.2. Obtener historial
         end_time = datetime.datetime.now(datetime.timezone.utc)
         
-        # Determinar cuántos días consultar según el rango recibido
         if time_range == "7d":
             days_to_query = 7
         elif time_range == "14d":
@@ -127,12 +119,11 @@ async def get_energy_summary(
         elif time_range == "30d":
             days_to_query = 30
         else:
-            days_to_query = 1  # Por defecto 1 día
+            days_to_query = 1  
 
             
         start_time = end_time - datetime.timedelta(days=days_to_query)
 
-        # Proyección de campos
         projection = {
             "time": 1,
             "object.agg_activePower": 1,
@@ -160,7 +151,6 @@ async def get_energy_summary(
 
         historical_docs = await historical_cursor.to_list(length=None) 
 
-        # 3.3. Formatear datos para los gráficos
         daily_data_raw = {
             "consumption": [], "voltage": [], "current": [], "power": [],
             "powerFactor": [], "frequency": [], "thd": [], "reactivePower": [], "apparentPower": []
@@ -168,20 +158,13 @@ async def get_energy_summary(
 
         for doc in historical_docs:
             try:
-                # 1. Obtener la hora UTC de la DB
                 time_utc = doc["time"]
                 
-                # 1.b. Asegurar que la hora sea "aware" (consciente)
-                # ¡Esta es la línea que faltaba!
                 if time_utc and time_utc.tzinfo is None:
                     time_utc = time_utc.replace(tzinfo=datetime.timezone.utc)
                 
-                # 2. Convertirla a la zona horaria de Chile
                 time_santiago = time_utc.astimezone(CHILE_TZ)
                 
-                # --- FIN DE LA CORRECCIÓN ---
-
-                # 3. Formatear la etiqueta usando la hora convertida
                 if days_to_query > 1:
                     time_str = time_santiago.strftime("%d-%m") 
                 else:
@@ -201,7 +184,6 @@ async def get_energy_summary(
             except Exception:
                 continue
         
-        # --- ¡INICIO DE LA CORRECCIÓN PARA GAUGES (ANTI-REINICIOS)! ---
         
         total_agg_wh = 0
         total_a_wh = 0
@@ -209,81 +191,67 @@ async def get_energy_summary(
         total_c_wh = 0
 
         if len(historical_docs) < 2:
-            pass # No hay suficientes datos para calcular el delta
+            pass 
         else:
-            # Empezamos con la primera lectura como referencia
             last_obj = historical_docs[0].get("object", {})
             last_agg = last_obj.get("agg_activeEnergy", 0)
             last_a = last_obj.get("phaseA_activeEnergy", 0)
             last_b = last_obj.get("phaseB_activeEnergy", 0)
             last_c = last_obj.get("phaseC_activeEnergy", 0)
-
-            # Iteramos desde la *segunda* lectura en adelante
+            
             for doc in historical_docs[1:]:
                 current_obj = doc.get("object", {})
                 
-                # --- Total Agregado ---
                 current_agg = current_obj.get("agg_activeEnergy", 0)
                 delta_agg = current_agg - last_agg
-                if delta_agg < 0: # Reinicio
+                if delta_agg < 0:
                     total_agg_wh += current_agg
                 else:
                     total_agg_wh += delta_agg
                 last_agg = current_agg
 
-                # --- Fase A ---
                 current_a = current_obj.get("phaseA_activeEnergy", 0)
                 delta_a = current_a - last_a
-                if delta_a < 0: # Reinicio
+                if delta_a < 0: 
                     total_a_wh += current_a
                 else:
                     total_a_wh += delta_a
                 last_a = current_a
 
-                # --- Fase B ---
                 current_b = current_obj.get("phaseB_activeEnergy", 0)
                 delta_b = current_b - last_b
-                if delta_b < 0: # Reinicio
+                if delta_b < 0: 
                     total_b_wh += current_b
                 else:
                     total_b_wh += delta_b
                 last_b = current_b
                 
-                # --- Fase C ---
                 current_c = current_obj.get("phaseC_activeEnergy", 0)
                 delta_c = current_c - last_c
-                if delta_c < 0: # Reinicio
+                if delta_c < 0: 
                     total_c_wh += current_c
                 else:
                     total_c_wh += delta_c
                 last_c = current_c
 
-        # Copiamos el objeto 'object' más reciente para los datos "en vivo"
         latest_obj = latest_data_doc.get("object", {}).copy()
         
-        # ¡Sobrescribimos los campos de energía con nuestros deltas calculados!
         latest_obj["agg_activeEnergy"] = total_agg_wh
         latest_obj["phaseA_activeEnergy"] = total_a_wh
         latest_obj["phaseB_activeEnergy"] = total_b_wh
         latest_obj["phaseC_activeEnergy"] = total_c_wh
         
-        # --- ¡FIN DE LA CORRECCIÓN PARA GAUGES! ---
-
-        # 4. Combinar historial
         historical_data = {
             "daily": DeviceHistoricalData(**daily_data_raw),
-            "monthly": _generate_mock_monthly_data(i) # (Mock)
+            "monthly": _generate_mock_monthly_data(i) 
         }
-        alerts = _generate_mock_alerts(latest_obj) # (Mock)
+        alerts = _generate_mock_alerts(latest_obj) 
         
-        
-        # --- (El resto de la creación del objeto 'device_data' queda igual) ---
         device_info_data = latest_data_doc.get("deviceInfo", {})
         device_info_data["deviceName"] = device_pg.name
         device_info_data["location"] = f"Centro: {device_pg.center_id}"
         mongo_id = latest_data_doc.get("_id")
         
-        # Corrección de hora para "Últ. dato:"
         time_obj = latest_data_doc.get("time")
         if time_obj and time_obj.tzinfo is None:
             time_obj = time_obj.replace(tzinfo=datetime.timezone.utc)
@@ -292,11 +260,10 @@ async def get_energy_summary(
         
         device_data = {
             "_id": {"$oid": str(mongo_id)},
-            "time": local_time.isoformat() if local_time else None, # <-- Hora Local
+            "time": local_time.isoformat() if local_time else None, 
             "deviceInfo": device_info_data,
-            "object": latest_obj, # <-- Este objeto AHORA tiene los deltas correctos
+            "object": latest_obj,
             "historicalData": historical_data,
-            # Este campo también usa el valor corregido
             "dailyConsumption": latest_obj["agg_activeEnergy"], 
             "alerts": alerts
         }
@@ -336,7 +303,6 @@ async def get_device_details(
     
     mongo_collection = mongodb.db_energy[settings.MONGO_COLLECTION_NAME]
 
-    # --- 1. Verificación de Seguridad (Esto queda igual) ---
     user_company_links = db.query(UserCompany).filter(
         UserCompany.user_id == current_user.id
     ).all()
@@ -356,14 +322,12 @@ async def get_device_details(
     if not device_pg:
         raise HTTPException(status_code=404, detail="Dispositivo no encontrado o sin permisos")
     
-    # --- 2. Lógica de Agregación (Modificada) ---
     
     end_time_utc = datetime.datetime.now(pytz.utc)
     start_time_utc = end_time_utc - datetime.timedelta(days=days)
 
     pipeline = [
         {
-            # Fase 1: Filtrar documentos
             "$match": {
                 "deviceInfo.devEui": dev_eui,
                 "time": {"$gte": start_time_utc, "$lte": end_time_utc},
@@ -371,7 +335,6 @@ async def get_device_details(
             }
         },
         {
-            # Fase 2: Proyectar campos y convertir la hora a zona de Chile
             "$project": {
                 "time": "$time",
                 "energy": "$object.agg_activeEnergy",
@@ -385,19 +348,15 @@ async def get_device_details(
             }
         },
         {
-            # Fase 3: Ordenar por tiempo (¡CRÍTICO para la lógica de deltas!)
             "$sort": {"time": 1}
         },
         {
-            # Fase 4: Agrupar por día (zona Chile)
             "$group": {
                 "_id": "$date_chile",
                 "readings": {"$push": "$energy"} 
             }
         },
         {
-            # Fase 5: Ordenar por fecha para el gráfico final
-            # --- ¡AQUÍ ESTÁ LA CORRECCIÓN! ---
             "$sort": {"_id": 1}
         }
     ]
@@ -405,47 +364,31 @@ async def get_device_details(
     cursor = mongo_collection.aggregate(pipeline)
     daily_results = await cursor.to_list(length=None)
 
-    # --- 3. Formatear la Respuesta (Lógica de Delta en Python) ---
     daily_consumption_list = []
     total_consumption_kwh = 0
     
     for doc in daily_results:
-        # Extraer la lista de lecturas del día
         readings_list = doc.get("readings", [])
         
         if len(readings_list) < 2:
-            # No se puede calcular un delta con 0 o 1 lectura
             continue
-
-        # --- ¡INICIO DE LA NUEVA LÓGICA DE CÁLCULO DE DELTA! ---
         daily_total_wh = 0
-        # Empezamos con la primera lectura del día como referencia
         last_reading = readings_list[0] 
         
-        # Iteramos desde la *segunda* lectura en adelante
         for i in range(1, len(readings_list)):
             current_reading = readings_list[i]
             
             delta = current_reading - last_reading
             
             if delta < 0:
-                # ¡REINICIO DETECTADO!
-                # El consumo en este intervalo es solo la lectura actual (lo que
-                # se ha acumulado desde el reinicio).
                 daily_total_wh += current_reading
             else:
-                # Sin reinicio, sumar la diferencia.
                 daily_total_wh += delta
                 
-            # Actualizar la "última lectura" para la siguiente iteración
             last_reading = current_reading 
         
-        # --- FIN DE LA LÓGICA DE DELTA ---
-        
-        # Convertir de Wh a kWh
         consumption_kwh = daily_total_wh / 1000.0
         
-        # Formatear la fecha de YYYY-MM-DD a DD-MM
         date_obj = datetime.datetime.strptime(doc["_id"], "%Y-%m-%d")
         date_str = date_obj.strftime("%d-%m")
 
@@ -455,7 +398,6 @@ async def get_device_details(
         ))
         total_consumption_kwh += consumption_kwh
 
-    # --- (El resto de la función queda igual) ---
     avg_kwh = total_consumption_kwh / len(daily_consumption_list) if daily_consumption_list else 0
 
     device_info_data = {

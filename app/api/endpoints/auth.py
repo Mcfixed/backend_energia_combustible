@@ -22,12 +22,10 @@ def login_for_access_token(
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    # Preparamos los datos para los tokens
     token_data = {"sub": user.email}
     
-    # Creamos AMBOS tokens
     access_token = security.create_access_token(data=token_data)
-    refresh_token = security.create_refresh_token(data=token_data) # <--- ¡NUEVO!
+    refresh_token = security.create_refresh_token(data=token_data)
     
     return {
         "access_token": access_token,
@@ -36,14 +34,8 @@ def login_for_access_token(
     }
 @router.post("/token/refresh", response_model=AccessTokenResponse)
 def refresh_access_token(
-    # Reutilizamos tu dependencia 'get_current_active_user'.
-    # El frontend enviará el REFRESH token aquí.
-    # Esta dependencia validará si el refresh token es legítimo,
-    # no ha expirado, y el usuario existe y está activo.
     current_user: user_model.User = Depends(get_current_active_user)
 ):
-    # Si la dependencia pasa, significa que el refresh token es válido.
-    # Simplemente generamos un NUEVO token de acceso.
     new_access_token = security.create_access_token(
         data={"sub": current_user.email}
     )

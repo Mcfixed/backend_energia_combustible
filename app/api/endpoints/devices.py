@@ -3,14 +3,14 @@ from sqlalchemy.orm import Session
 from motor.motor_asyncio import AsyncIOMotorCollection
 
 import datetime
-import pymongo # Para ordenar
-from typing import List # <-- Importar List
+import pymongo 
+from typing import List
 
 from app.db.database import get_db
 from app.db import mongodb
 
 from app.db.mongodb import db_energy, db_fuel
-from app.crud import crud_device, crud_user # Importar crud_user para validar centros
+from app.crud import crud_device, crud_user
 from app.schemas import device as device_schema
 from app.models import user as user_model, device as device_model
 from app.api.dependencies import get_current_active_user
@@ -22,9 +22,7 @@ router = APIRouter()
 def create_device(
     device: device_schema.DeviceCreate,
     db: Session = Depends(get_db),
-    # current_user: user_model.User = Depends(get_current_active_user) # Descomentar para proteger
 ):
-    # Validar que el Centro exista
     db_center = crud_user.get_center_by_id(db, center_id=device.center_id)
     if not db_center:
         raise HTTPException(status_code=404, detail="Center not found")
@@ -35,13 +33,11 @@ def create_device(
     return crud_device.create_device(db=db, device_data=device)
 
 
-#vistas
 @router.get("/devices/details", response_model=List[device_schema.DeviceDetails])
 def read_devices_with_details(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    # current_user: user_model.User = Depends(get_current_active_user)
 ):
     """
     Obtiene todos los dispositivos con detalles de centro y compañía
@@ -55,8 +51,6 @@ def read_devices_with_details(
 async def get_device_with_latest_data(
     device_id: int,
     db: Session = Depends(get_db),
-    # Quitamos la dependencia de 'mongo_collection'
-    # current_user: user_model.User = Depends(get_current_active_user)
 ):
     device = crud_device.get_device(db, device_id=device_id)
     if not device:
@@ -64,18 +58,14 @@ async def get_device_with_latest_data(
 
     if device.status == device_model.DeviceStatus.do_not_display:
          raise HTTPException(status_code=403, detail="Device access forbidden")
-
-    # --- Lógica dinámica para seleccionar la colección ---
     mongo_collection: AsyncIOMotorCollection
     
-    # Asumimos que el campo se llama 'type' (como en tu código)
     if device.type == "combustible":
         mongo_collection = mongodb.db_fuel[settings.MONGO_COLLECTION_NAME2]
     elif device.type == "energia":
         mongo_collection = mongodb.db_energy[settings.MONGO_COLLECTION_NAME]
     else:
         raise HTTPException(status_code=400, detail=f"Unknown device type: {device.type}")
-    # --- Fin de la lógica dinámica ---
 
     latest_data_doc = await mongo_collection.find_one(
         {"deviceInfo.devEui": device.dev_eui},
@@ -95,15 +85,11 @@ async def get_device_with_latest_data(
             
     return combined_response
 
-
-# --- NUEVOS ENDPOINTS ---
-
 @router.get("/devices", response_model=List[device_schema.Device])
 def read_devices(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    # current_user: user_model.User = Depends(get_current_active_user)
 ):
     """
     Obtiene una lista de todos los dispositivos.
@@ -117,7 +103,6 @@ def read_devices_by_center(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
-    # current_user: user_model.User = Depends(get_current_active_user)
 ):
     """
     Obtiene todos los dispositivos de un centro específico.
@@ -128,9 +113,8 @@ def read_devices_by_center(
 @router.patch("/devices/{device_id}", response_model=device_schema.Device)
 def update_device(
     device_id: int,
-    device_in: device_schema.DeviceUpdate, # Usa el nuevo schema
+    device_in: device_schema.DeviceUpdate, 
     db: Session = Depends(get_db),
-    # current_user: user_model.User = Depends(get_current_active_user)
 ):
     """
     Actualiza un dispositivo (nombre, status, tipo, centro).
@@ -138,8 +122,7 @@ def update_device(
     db_device = crud_device.get_device(db, device_id=device_id)
     if db_device is None:
         raise HTTPException(status_code=404, detail="Device not found")
-    
-    # Si se intenta mover de centro, validar que el nuevo centro exista
+
     if device_in.center_id:
         db_center = crud_user.get_center_by_id(db, center_id=device_in.center_id)
         if not db_center:
@@ -152,7 +135,6 @@ def update_device(
 def delete_device(
     device_id: int,
     db: Session = Depends(get_db),
-    # current_user: user_model.User = Depends(get_current_active_user)
 ):
     """
     Elimina un dispositivo de la base de datos.
@@ -187,9 +169,8 @@ async def get_device_history(
     mongo_collection: AsyncIOMotorCollection
     db_name: str
     
-    # --- MODIFICACIÓN 1: Lógica para construir los campos de agregación ---
-    agg_fields = {}             # Para el $bucketAuto
-    project_object_fields = {}  # Para el $project
+    agg_fields = {}            
+    project_object_fields = {}  
 
     device_type_str = db_device.type 
 
@@ -198,33 +179,29 @@ async def get_device_history(
         mongo_collection = mongodb.db_fuel[settings.MONGO_COLLECTION_NAME2]
         db_name = settings.MONGO_FUEL_DB_NAME
         
-        fields_to_agg = ["volume_L_S0", "volume_L_S1", "pressure_Bar_S0"] # Añade todos los que grafiques
+        fields_to_agg = ["volume_L_S0", "volume_L_S1", "pressure_Bar_S0"]
         
     elif device_type_str == "energia":
         print("Lógica: 'energia'. Configurando agregación Min/Max.")
         mongo_collection = mongodb.db_energy[settings.MONGO_COLLECTION_NAME]
         db_name = settings.MONGO_DB_NAME
         
-        fields_to_agg = ["agg_activePower", "agg_voltage", "agg_current"] # Añade todos los que grafiques
+        fields_to_agg = ["agg_activePower", "agg_voltage", "agg_current"] 
     else:
         raise HTTPException(status_code=400, detail=f"Unknown or unsupported device type: {db_device.type}")
         
-    # Construir dinámicamente los operadores $min y $max
     for field in fields_to_agg:
         field_min = f"{field}_min"
         field_max = f"{field}_max"
         
-        # 1. Para el $bucketAuto (output)
         agg_fields[field_min] = { "$min": f"$object.{field}" }
         agg_fields[field_max] = { "$max": f"$object.{field}" }
         
-        # 2. Para el $project (para re-formatear el 'object')
         project_object_fields[field_min] = f"${field_min}"
         project_object_fields[field_max] = f"${field_max}"
     
     print(f"Acceso a Mongo: DB='{db_name}', Colección='{mongo_collection.name}'")
     
-    # --- MODIFICACIÓN 2: EL PIPELINE ---
 
     match_stage = {
         "$match": {
@@ -237,10 +214,10 @@ async def get_device_history(
     bucket_stage = {
         "$bucketAuto": {
             "groupBy": "$time",
-            "buckets": 500, # Sigue siendo 500 baldes
+            "buckets": 500,
             "output": {
                 "time": { "$min": "$time" },
-                **agg_fields # Desempaqueta todos los $min y $max
+                **agg_fields
             }
         }
     }
@@ -249,8 +226,6 @@ async def get_device_history(
         "$project": {
             "_id": 0, 
             "time": "$time",
-            # Reestructura la salida para que 'object' contenga los min/max
-            # Salida: { time: "...", object: { agg_activePower_min: 10, agg_activePower_max: 1000, ... } }
             "object": project_object_fields 
         }
     }

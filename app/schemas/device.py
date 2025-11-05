@@ -1,9 +1,8 @@
 from pydantic import BaseModel, Field
 from app.models.device import DeviceStatus, DeviceType
 from typing import Optional, List, Any
-import datetime # <-- Importante
+import datetime
 
-# --- Esquemas para PostgreSQL ---
 
 class DeviceBase(BaseModel):
     name: str
@@ -30,7 +29,6 @@ class Device(DeviceBase):
     class Config:
         from_attributes = True
 
-# --- Schema (Para Vista 1: Tabla) ---
 class DeviceDetails(BaseModel):
     """Schema para la tabla principal de sensores."""
     id: int
@@ -46,7 +44,6 @@ class DeviceDetails(BaseModel):
     class Config:
         from_attributes = True
 
-# --- Esquemas para MongoDB ---
 
 class MongoCombustibleData(BaseModel):
     pressure_Bar_S0: Optional[float] = None
@@ -84,14 +81,9 @@ class MongoMeasurementData(MongoEnergiaData):
 class MongoHistoryRecord(BaseModel):
     """Un solo registro histórico de MongoDB."""
     time: datetime.datetime
-    object: Any # El 'object' de Mongo
-
-    # --- CORRECCIÓN (Problema Futuro) ---
-    # Añadimos 'extra = 'ignore'' para que Pydantic no rechace
-    # el campo '_id' que viene de MongoDB.
+    object: Any 
     class Config:
         extra = 'ignore'
 
-# --- Esquema combinado (de tu endpoint get_device_with_latest_data) ---
 class DeviceWithLatestData(Device):
     latest_measurement: MongoMeasurementData | MongoCombustibleData | dict | None = None

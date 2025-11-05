@@ -9,7 +9,7 @@ def get_device(db: Session, device_id: int) -> device.Device | None:
 def get_device_by_eui(db: Session, dev_eui: str) -> device.Device | None:
     return db.query(device.Device).filter(device.Device.dev_eui == dev_eui).first()
 
-# --- NUEVA FUNCIÓN ---
+
 def get_devices(db: Session, skip: int = 0, limit: int = 100) -> List[device.Device]:
     """
     Obtiene todos los dispositivos de la base de datos.
@@ -41,7 +41,6 @@ def create_device(db: Session, device_data: device_schema.DeviceCreate) -> devic
     db.refresh(db_device)
     return db_device
 
-# --- NUEVA FUNCIÓN ---
 def update_device(
     db: Session,
     db_device: device.Device,
@@ -92,7 +91,4 @@ def get_devices_with_details(db: Session, skip: int = 0, limit: int = 100) -> Li
         .limit(limit)
         .all()
     )
-    
-    # Convertir la lista de objetos Row (que son como tuplas) en una lista de diccionarios
-    # Pydantic puede manejar esto sin problemas.
     return [result._asdict() for result in results]

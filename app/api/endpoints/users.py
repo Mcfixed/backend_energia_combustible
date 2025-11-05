@@ -220,7 +220,7 @@ def assign_user_to_company(
     """
     Asigna un usuario a una compañía con un rol específico.
     """
-    # Validar que el usuario y la empresa existan
+    
     db_user = crud_user.get_user_by_id(db, assignment.user_id)
     if not db_user:
         raise HTTPException(status_code=404, detail="User not found. Cannot assign.")
@@ -229,9 +229,7 @@ def assign_user_to_company(
     if not db_company:
         raise HTTPException(status_code=404, detail="Company not found. Cannot assign.")
 
-    # (Opcional) Validar si la asignación ya existe
-    # ...
-
+    
     return crud_user.assign_user_to_company(db=db, assignment=assignment)
 
 

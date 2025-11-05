@@ -54,16 +54,10 @@ def _create_tanks_from_mongo(
     en 3 objetos FuelTank para la API.
     """
     try:
-        # Validamos el doc de Mongo con Pydantic
         mongo_data = MongoFuelDoc.model_validate(mongo_doc)
         mongo_obj = mongo_data.object
-
-        # --- ¡¡CORRECCIÓN AQUÍ!! ---
-        # 1. 'mongo_data.time' es un objeto datetime
         last_update_dt = mongo_data.time 
-        # 2. El schema 'FuelSensorData' espera un string (JSON)
         last_update_iso = last_update_dt.isoformat()
-        # --- FIN DE LA CORRECCIÓN ---
 
         lat = mongo_data.rxInfo[0].location.latitude if mongo_data.rxInfo and mongo_data.rxInfo[0].location else 0.0
         lon = mongo_data.rxInfo[0].location.longitude if mongo_data.rxInfo and mongo_data.rxInfo[0].location else 0.0
@@ -74,7 +68,7 @@ def _create_tanks_from_mongo(
             percentage=mongo_obj.percentage_S0 or 0.0,
             pressure_Bar=mongo_obj.pressure_Bar_S0 or 0.0,
             sensor_ok=mongo_obj.sensor_0_ok,
-            lastUpdate=last_update_iso, # <-- Usamos el string
+            lastUpdate=last_update_iso, 
             latitude=lat,
             longitude=lon
         )
@@ -90,7 +84,7 @@ def _create_tanks_from_mongo(
             percentage=mongo_obj.percentage_S1 or 0.0,
             pressure_Bar=mongo_obj.pressure_Bar_S1 or 0.0,
             sensor_ok=mongo_obj.sensor_1_ok,
-            lastUpdate=last_update_iso, # <-- Usamos el string
+            lastUpdate=last_update_iso,
             latitude=lat,
             longitude=lon
         )
@@ -106,7 +100,7 @@ def _create_tanks_from_mongo(
             percentage=mongo_obj.percentage_S2 or 0.0,
             pressure_Bar=mongo_obj.pressure_Bar_S2 or 0.0,
             sensor_ok=mongo_obj.sensor_2_ok,
-            lastUpdate=last_update_iso, # <-- Usamos el string
+            lastUpdate=last_update_iso,
             latitude=lat,
             longitude=lon
         )
@@ -137,7 +131,6 @@ async def get_fuel_summary(
     time_range: TimeRange = TimeRange.h24
 ):
 
-    # 1. Obtener las empresas del usuario
     user_company_links = db.query(UserCompany).filter(
         UserCompany.user_id == current_user.id
     ).all()
@@ -147,7 +140,6 @@ async def get_fuel_summary(
 
     allowed_company_ids = [link.company_id for link in user_company_links]
 
-    # 2. Obtener todos los CENTROS de esas empresas
     centers_from_db = db.query(center_model.Center).filter(
         center_model.Center.company_id.in_(allowed_company_ids)
     ).all()
@@ -158,11 +150,9 @@ async def get_fuel_summary(
 
     response_list = []
 
-    # 3. Iterar por cada Centro de Postgres
     for center_pg in centers_from_db:
         print(f"\n--- Procesando Centro ID: {center_pg.id} ---")
 
-        # 4. Encontrar todos los devices (controladores) de este centro
         print(f"DIAGNÓSTICO (Paso 4): Buscando devices en PG con center_id={center_pg.id} y type='combustible'...")
         devices_from_db = db.query(Device).filter(
             Device.center_id == center_pg.id,
@@ -176,20 +166,16 @@ async def get_fuel_summary(
         center_tanks: List[FuelTank] = []
         center_id_str = str(center_pg.id)
 
-        # 5. Iterar por cada device (controlador)
         for device_pg in devices_from_db:
             print(f" 	DIAGNÓSTICO (Paso 5): Buscando en Mongo 'deviceInfo.devEui': '{device_pg.dev_eui}'")
 
-            # --- ¡¡MODIFICACIÓN AQUÍ!! ---
-            # Añadimos el filtro para asegurar que 'object' existe y es un objeto
             query = {
                 "deviceInfo.devEui": device_pg.dev_eui,
                 "object": { "$type": "object" }
             }
-            # --- FIN DE LA MODIFICACIÓN ---
 
             latest_data_doc = await mongo_collection.find_one(
-                query, # <-- Usamos la query modificada
+                query,
                 sort=[("time", pymongo.DESCENDING)]
             )
 
@@ -200,8 +186,6 @@ async def get_fuel_summary(
             print(f" 	 	-> ÉXITO (Paso 5): Documento encontrado en Mongo (Time: {latest_data_doc.get('time')}).")
             print(f" 	DIAGNÓSTICO (Paso 6): Enviando documento a _create_tanks_from_mongo...")
 
-            # 6. Transformar el doc de Mongo en 3 tanques
-            # (Mi corrección anterior estaba aquí, pero fallaba antes de llegar)
             tanks_from_device = _create_tanks_from_mongo(
                 device_pg,
                 latest_data_doc,
@@ -209,7 +193,6 @@ async def get_fuel_summary(
             )
             center_tanks.extend(tanks_from_device)
 
-        # 7. Calcular totales del Centro
         total_capacity = sum(tank.capacity for tank in center_tanks)
         current_inventory = sum(tank.sensor.volume_L for tank in center_tanks)
         center_status = _get_center_status(center_tanks)
@@ -217,7 +200,7 @@ async def get_fuel_summary(
         center_response = FuelCenter(
             id=center_id_str,
             name=center_pg.name,
-            location=f"Ubicación de {center_pg.name}", # Hardcodeado
+            location=f"Ubicación de {center_pg.name}",
             status=center_status,
             tanks=center_tanks,
             totalCapacity=total_capacity,

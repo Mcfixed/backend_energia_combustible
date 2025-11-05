@@ -2,11 +2,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
 
-#
-# Estos modelos Pydantic definen la estructura de la respuesta
-# que tu frontend (Energia.tsx) espera recibir.
-#
-
 class Oid(BaseModel):
     oid: str = Field(..., alias="$oid")
 
@@ -66,7 +61,7 @@ class EnergyObject(BaseModel):
     address: int
     
     class Config:
-        extra = 'ignore' # Ignorar campos extra del 'object' de Mongo
+        extra = 'ignore'
 
 class HistoricalDataPoint(BaseModel):
     time: str
@@ -85,11 +80,10 @@ class DeviceHistoricalData(BaseModel):
 
 class DeviceAlert(BaseModel):
     id: int
-    type: str  # 'warning', 'info', 'error'
+    type: str
     message: str
     timestamp: str
 
-# --- Este es el Modelo de Respuesta Principal ---
 class DeviceSummary(BaseModel):
     id: Oid = Field(..., alias="_id")
     time: str
@@ -100,13 +94,13 @@ class DeviceSummary(BaseModel):
     alerts: List[DeviceAlert]
 
     class Config:
-        populate_by_name = True # Permite usar '_id' en lugar de 'id'
+        populate_by_name = True
         json_encoders = {Oid: lambda v: v.oid if isinstance(v, Oid) else str(v)}
 
 class DailyConsumptionPoint(BaseModel):
     """Representa el consumo total de un solo día."""
-    date: str       # Formato "DD-MM" o "YYYY-MM-DD"
-    consumption: float  # Consumo en kWh
+    date: str
+    consumption: float  
 
 class DeviceDetailsResponse(BaseModel):
     """La respuesta completa para la vista de detalles."""

@@ -10,5 +10,4 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
 
-    # Relación M2M con Company a través de UserCompany
     companies_association = relationship("UserCompany", back_populates="user")

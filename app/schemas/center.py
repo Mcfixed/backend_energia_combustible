@@ -1,7 +1,6 @@
-# app/schemas/center.py
 from pydantic import BaseModel
 from typing import List, Optional
-from .device import Device # Importamos el schema de Device
+from .device import Device
 
 class CenterBase(BaseModel):
     name: str
