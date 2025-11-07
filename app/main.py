@@ -16,8 +16,8 @@ app = FastAPI(
     lifespan=lifespan
 )
 origins = [
-    "http://localhost:5173", # Puerto por defecto de Vite
-    "http://localhost:3000", # Puerto por defecto de Create React App
+    "http://localhost:5173",
+    "http://localhost:3000",
     "http://localhost",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:3000",
@@ -25,10 +25,10 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,       # Lista de orígenes permitidos
-    allow_credentials=True,    # Permite cookies/tokens de autorización
-    allow_methods=["*"],       # Permite todos los métodos (GET, POST, etc.)
-    allow_headers=["*"],       # Permite todos los headers
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Incluir los routers

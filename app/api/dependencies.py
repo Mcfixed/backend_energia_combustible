@@ -10,7 +10,7 @@ from app.models import user as user_model
 from app.schemas import token as token_schema
 from app.crud import crud_user
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
 
 def get_current_user(
     db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)
