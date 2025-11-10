@@ -342,8 +342,6 @@ async def get_device_details(
     """
     
     mongo_collection = mongodb.db_energy[settings.MONGO_COLLECTION_NAME]
-
-    # --- 1. Verificación de Seguridad (Queda igual) ---
     user_company_links = db.query(UserCompany).filter(
         UserCompany.user_id == current_user.id
     ).all()
@@ -359,8 +357,7 @@ async def get_device_details(
     if not device_pg:
         raise HTTPException(status_code=404, detail="Dispositivo no encontrado o sin permisos")
     price_from_db = device_pg.center.price_kwh if device_pg.center else 250.0
-    
-    # --- 2. Lógica de Agregación DIARIA (Últimos 'days' días) ---
+
     
     end_time_utc = datetime.datetime.now(pytz.utc)
     start_time_daily_utc = end_time_utc - datetime.timedelta(days=days)
@@ -385,7 +382,6 @@ async def get_device_details(
     cursor_daily = mongo_collection.aggregate(pipeline_daily)
     daily_results = await cursor_daily.to_list(length=None)
 
-    # --- Procesamiento Python para datos DIARIOS ---
     daily_consumption_list = []
     total_consumption_kwh_30days = 0
     
@@ -398,10 +394,14 @@ async def get_device_details(
         for i in range(1, len(readings_list)):
             current_reading = readings_list[i]
             delta = current_reading - last_reading
-            if delta < 0:
-                daily_total_wh += current_reading
-            else:
+            
+            # --- INICIO DE LA CORRECCIÓN 1 ---
+            # Solo sumamos si el delta es positivo (consumo real).
+            # Si es negativo (reinicio o anomalía) o cero, lo ignoramos.
+            if delta > 0:
                 daily_total_wh += delta
+            # --- FIN DE LA CORRECCIÓN 1 ---
+                
             last_reading = current_reading 
         
         consumption_kwh = daily_total_wh / 1000.0
@@ -415,8 +415,6 @@ async def get_device_details(
         total_consumption_kwh_30days += consumption_kwh
 
     avg_kwh_30days = total_consumption_kwh_30days / len(daily_consumption_list) if daily_consumption_list else 0
-
-    # --- 3. Lógica de Agregación MENSUAL (Últimos 12 meses) ---
     
     start_time_monthly_utc = end_time_utc - datetime.timedelta(days=365)
     
@@ -429,21 +427,19 @@ async def get_device_details(
         {"$project": {
             "time": "$time", "energy": "$object.agg_activeEnergy",
             "month_chile": {"$dateToString": {
-                "format": "%Y-%m", "date": "$time", "timezone": "America/Santiago" # <-- Agrupar por mes
+                "format": "%Y-%m", "date": "$time", "timezone": "America/Santiago"
             }}
         }},
         {"$sort": {"time": 1}},
-        {"$group": {"_id": "$month_chile", "readings": {"$push": "$energy"}}}, # <-- Agrupar por mes
+        {"$group": {"_id": "$month_chile", "readings": {"$push": "$energy"}}},
         {"$sort": {"_id": 1}}
     ]
     
     cursor_monthly = mongo_collection.aggregate(pipeline_monthly)
     monthly_results = await cursor_monthly.to_list(length=None)
 
-    # --- Procesamiento Python para datos MENSUALES ---
     monthly_consumption_list = []
     
-    # Diccionario para nombres de meses en español
     month_abbr_es = {
         1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr", 5: "May", 6: "Jun",
         7: "Jul", 8: "Ago", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"
@@ -458,10 +454,13 @@ async def get_device_details(
         for i in range(1, len(readings_list)):
             current_reading = readings_list[i]
             delta = current_reading - last_reading
-            if delta < 0:
-                monthly_total_wh += current_reading
-            else:
+
+            # --- INICIO DE LA CORRECCIÓN 2 ---
+            # Aplicamos la misma lógica que en el cálculo diario
+            if delta > 0:
                 monthly_total_wh += delta
+            # --- FIN DE LA CORRECCIÓN 2 ---
+                
             last_reading = current_reading
             
         consumption_kwh = monthly_total_wh / 1000.0
@@ -470,7 +469,7 @@ async def get_device_details(
 
         monthly_consumption_list.append(MonthlyConsumptionPoint(
             date=doc["_id"],
-            month_name=f"{month_name_str} {date_obj.year}", # ej: "Oct 2025"
+            month_name=f"{month_name_str} {date_obj.year}",
             consumption=round(consumption_kwh, 2)
         ))
 
@@ -487,7 +486,6 @@ async def get_device_details(
         dailyConsumption=daily_consumption_list,
         totalConsumptionLast30Days=round(total_consumption_kwh_30days, 2),
         avgDailyConsumption=round(avg_kwh_30days, 2),
-        # Datos Mensuales
         monthlyConsumption=monthly_consumption_list
     )
 
@@ -498,7 +496,7 @@ async def get_device_details(
 )
 async def update_center_price_by_device(
     dev_eui: str,
-    price_data: CenterPriceUpdate, # <-- Recibe el nuevo precio en el body
+    price_data: CenterPriceUpdate,
     db: Session = Depends(get_db),
     current_user: user_model.User = Depends(get_current_active_user)
 ):
@@ -506,8 +504,6 @@ async def update_center_price_by_device(
     Este endpoint busca un dispositivo por su EUI, encuentra el
     centro al que pertenece, y actualiza el 'price_kwh' de ESE centro.
     """
-    
-    # --- 1. Verificación de Seguridad (Reutilizamos la lógica) ---
     user_company_links = db.query(UserCompany).filter(
         UserCompany.user_id == current_user.id
     ).all()
@@ -516,7 +512,6 @@ async def update_center_price_by_device(
 
     allowed_company_ids = [link.company_id for link in user_company_links]
 
-    # Hacemos la misma consulta que en 'get_device_details'
     device_pg = db.query(Device)\
         .join(center_model.Center)\
         .filter(
@@ -531,7 +526,6 @@ async def update_center_price_by_device(
     if not device_pg.center:
          raise HTTPException(status_code=404, detail="Dispositivo no está asociado a ningún centro")
 
-    # --- 2. Actualizar el Precio ---
     try:
         center_to_update = device_pg.center
         center_to_update.price_kwh = price_data.price_kwh
