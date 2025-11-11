@@ -241,6 +241,7 @@ async def get_energy_summary(
         if len(historical_docs) < 2:
             pass 
         else:
+            # --- INICIO BLOQUE CORREGIDO ---
             last_obj = historical_docs[0].get("object", {})
             last_agg = last_obj.get("agg_activeEnergy", 0)
             last_a = last_obj.get("phaseA_activeEnergy", 0)
@@ -250,37 +251,34 @@ async def get_energy_summary(
             for doc in historical_docs[1:]:
                 current_obj = doc.get("object", {})
                 
+                # --- Total Agregado ---
                 current_agg = current_obj.get("agg_activeEnergy", 0)
                 delta_agg = current_agg - last_agg
-                if delta_agg < 0:
-                    total_agg_wh += current_agg
-                else:
+                if delta_agg > 0:  # Solo sumar si el delta es positivo
                     total_agg_wh += delta_agg
-                last_agg = current_agg
+                last_agg = current_agg # Actualizar siempre
 
+                # --- Fase A ---
                 current_a = current_obj.get("phaseA_activeEnergy", 0)
                 delta_a = current_a - last_a
-                if delta_a < 0: 
-                    total_a_wh += current_a
-                else:
+                if delta_a > 0:
                     total_a_wh += delta_a
                 last_a = current_a
 
+                # --- Fase B ---
                 current_b = current_obj.get("phaseB_activeEnergy", 0)
                 delta_b = current_b - last_b
-                if delta_b < 0: 
-                    total_b_wh += current_b
-                else:
+                if delta_b > 0:
                     total_b_wh += delta_b
                 last_b = current_b
                 
+                # --- Fase C ---
                 current_c = current_obj.get("phaseC_activeEnergy", 0)
                 delta_c = current_c - last_c
-                if delta_c < 0: 
-                    total_c_wh += current_c
-                else:
+                if delta_c > 0:
                     total_c_wh += delta_c
                 last_c = current_c
+# --- FIN BLOQUE CORREGIDO ---
 
         latest_obj = latest_data_doc.get("object", {}).copy()
         
@@ -395,12 +393,8 @@ async def get_device_details(
             current_reading = readings_list[i]
             delta = current_reading - last_reading
             
-            # --- INICIO DE LA CORRECCIÓN 1 ---
-            # Solo sumamos si el delta es positivo (consumo real).
-            # Si es negativo (reinicio o anomalía) o cero, lo ignoramos.
             if delta > 0:
                 daily_total_wh += delta
-            # --- FIN DE LA CORRECCIÓN 1 ---
                 
             last_reading = current_reading 
         
@@ -455,11 +449,8 @@ async def get_device_details(
             current_reading = readings_list[i]
             delta = current_reading - last_reading
 
-            # --- INICIO DE LA CORRECCIÓN 2 ---
-            # Aplicamos la misma lógica que en el cálculo diario
             if delta > 0:
                 monthly_total_wh += delta
-            # --- FIN DE LA CORRECCIÓN 2 ---
                 
             last_reading = current_reading
             
