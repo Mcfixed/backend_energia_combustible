@@ -233,7 +233,7 @@ async def get_energy_summary(
                 continue
         
         
-        total_agg_wh = 0
+        """ total_agg_wh = 0
         total_a_wh = 0
         total_b_wh = 0
         total_c_wh = 0
@@ -241,7 +241,6 @@ async def get_energy_summary(
         if len(historical_docs) < 2:
             pass 
         else:
-            # --- INICIO BLOQUE CORREGIDO ---
             last_obj = historical_docs[0].get("object", {})
             last_agg = last_obj.get("agg_activeEnergy", 0)
             last_a = last_obj.get("phaseA_activeEnergy", 0)
@@ -251,34 +250,50 @@ async def get_energy_summary(
             for doc in historical_docs[1:]:
                 current_obj = doc.get("object", {})
                 
-                # --- Total Agregado ---
+                
                 current_agg = current_obj.get("agg_activeEnergy", 0)
                 delta_agg = current_agg - last_agg
-                if delta_agg > 0:  # Solo sumar si el delta es positivo
+                if delta_agg > 0:  
                     total_agg_wh += delta_agg
-                last_agg = current_agg # Actualizar siempre
+                last_agg = current_agg 
 
-                # --- Fase A ---
                 current_a = current_obj.get("phaseA_activeEnergy", 0)
                 delta_a = current_a - last_a
                 if delta_a > 0:
                     total_a_wh += delta_a
                 last_a = current_a
 
-                # --- Fase B ---
                 current_b = current_obj.get("phaseB_activeEnergy", 0)
                 delta_b = current_b - last_b
                 if delta_b > 0:
                     total_b_wh += delta_b
                 last_b = current_b
                 
-                # --- Fase C ---
                 current_c = current_obj.get("phaseC_activeEnergy", 0)
                 delta_c = current_c - last_c
                 if delta_c > 0:
                     total_c_wh += delta_c
-                last_c = current_c
-# --- FIN BLOQUE CORREGIDO ---
+                last_c = current_c """
+        total_agg_wh = 0
+        total_a_wh = 0
+        total_b_wh = 0
+        total_c_wh = 0
+
+        if len(historical_docs) >= 2:
+            first_obj = historical_docs[0].get("object", {})
+            last_obj = historical_docs[-1].get("object", {})
+
+            # Simple resta entre el último y el primero
+            total_agg_wh = last_obj.get("agg_activeEnergy", 0) - first_obj.get("agg_activeEnergy", 0)
+            total_a_wh = last_obj.get("phaseA_activeEnergy", 0) - first_obj.get("phaseA_activeEnergy", 0)
+            total_b_wh = last_obj.get("phaseB_activeEnergy", 0) - first_obj.get("phaseB_activeEnergy", 0)
+            total_c_wh = last_obj.get("phaseC_activeEnergy", 0) - first_obj.get("phaseC_activeEnergy", 0)
+
+            # Asegurar que no sean negativos (por reinicio del contador del medidor)
+            total_agg_wh = max(total_agg_wh, 0)
+            total_a_wh = max(total_a_wh, 0)
+            total_b_wh = max(total_b_wh, 0)
+            total_c_wh = max(total_c_wh, 0)        
 
         latest_obj = latest_data_doc.get("object", {}).copy()
         
@@ -325,7 +340,7 @@ async def get_energy_summary(
 @router.get(
     "/details/{dev_eui}",
     response_model=DeviceDetailsResponse,
-    summary="Obtiene los detalles de consumo diario Y mensual de un dispositivo"
+    summary="Obtiene los detalles de consumo diario y mensual de un dispositivo"
 )
 async def get_device_details(
     dev_eui: str,
@@ -334,11 +349,11 @@ async def get_device_details(
     current_user: user_model.User = Depends(get_current_active_user)
 ):
     """
-    Este endpoint calcula el consumo de energía DIARIO (últimos 30 días)
-    Y MENSUAL (últimos 12 meses) para un dispositivo, 
-    manejando los reinicios del contador.
+    Calcula el consumo diario (últimos N días) y mensual (últimos 12 meses)
+    usando la resta directa entre el valor final e inicial del contador
+    (agg_activeEnergy), en lugar de sumar deltas.
     """
-    
+
     mongo_collection = mongodb.db_energy[settings.MONGO_COLLECTION_NAME]
     user_company_links = db.query(UserCompany).filter(
         UserCompany.user_id == current_user.id
@@ -354,12 +369,13 @@ async def get_device_details(
 
     if not device_pg:
         raise HTTPException(status_code=404, detail="Dispositivo no encontrado o sin permisos")
+
     price_from_db = device_pg.center.price_kwh if device_pg.center else 250.0
 
-    
     end_time_utc = datetime.datetime.now(pytz.utc)
     start_time_daily_utc = end_time_utc - datetime.timedelta(days=days)
 
+    # === DAILY CONSUMPTION ===
     pipeline_daily = [
         {"$match": {
             "deviceInfo.devEui": dev_eui,
@@ -367,7 +383,8 @@ async def get_device_details(
             "object.agg_activeEnergy": {"$exists": True}
         }},
         {"$project": {
-            "time": "$time", "energy": "$object.agg_activeEnergy",
+            "time": "$time",
+            "energy": "$object.agg_activeEnergy",
             "date_chile": {"$dateToString": {
                 "format": "%Y-%m-%d", "date": "$time", "timezone": "America/Santiago"
             }}
@@ -382,23 +399,19 @@ async def get_device_details(
 
     daily_consumption_list = []
     total_consumption_kwh_30days = 0
-    
+
     for doc in daily_results:
         readings_list = doc.get("readings", [])
-        if len(readings_list) < 2: continue
-        
-        daily_total_wh = 0
-        last_reading = readings_list[0] 
-        for i in range(1, len(readings_list)):
-            current_reading = readings_list[i]
-            delta = current_reading - last_reading
-            
-            if delta > 0:
-                daily_total_wh += delta
-                
-            last_reading = current_reading 
-        
-        consumption_kwh = daily_total_wh / 1000.0
+        if len(readings_list) < 2:
+            continue
+
+        # ✅ Simple resta entre el último y el primero
+        start_reading = readings_list[0]
+        end_reading = readings_list[-1]
+        delta_wh = end_reading - start_reading
+        delta_wh = max(delta_wh, 0)  # evitar negativos por reinicio
+
+        consumption_kwh = delta_wh / 1000.0
         date_obj = datetime.datetime.strptime(doc["_id"], "%Y-%m-%d")
         date_str = date_obj.strftime("%d-%m")
 
@@ -409,9 +422,9 @@ async def get_device_details(
         total_consumption_kwh_30days += consumption_kwh
 
     avg_kwh_30days = total_consumption_kwh_30days / len(daily_consumption_list) if daily_consumption_list else 0
-    
+
+    # === MONTHLY CONSUMPTION ===
     start_time_monthly_utc = end_time_utc - datetime.timedelta(days=365)
-    
     pipeline_monthly = [
         {"$match": {
             "deviceInfo.devEui": dev_eui,
@@ -419,7 +432,8 @@ async def get_device_details(
             "object.agg_activeEnergy": {"$exists": True}
         }},
         {"$project": {
-            "time": "$time", "energy": "$object.agg_activeEnergy",
+            "time": "$time",
+            "energy": "$object.agg_activeEnergy",
             "month_chile": {"$dateToString": {
                 "format": "%Y-%m", "date": "$time", "timezone": "America/Santiago"
             }}
@@ -428,12 +442,11 @@ async def get_device_details(
         {"$group": {"_id": "$month_chile", "readings": {"$push": "$energy"}}},
         {"$sort": {"_id": 1}}
     ]
-    
+
     cursor_monthly = mongo_collection.aggregate(pipeline_monthly)
     monthly_results = await cursor_monthly.to_list(length=None)
 
     monthly_consumption_list = []
-    
     month_abbr_es = {
         1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr", 5: "May", 6: "Jun",
         7: "Jul", 8: "Ago", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"
@@ -441,20 +454,16 @@ async def get_device_details(
 
     for doc in monthly_results:
         readings_list = doc.get("readings", [])
-        if len(readings_list) < 2: continue
-        
-        monthly_total_wh = 0
-        last_reading = readings_list[0] 
-        for i in range(1, len(readings_list)):
-            current_reading = readings_list[i]
-            delta = current_reading - last_reading
+        if len(readings_list) < 2:
+            continue
 
-            if delta > 0:
-                monthly_total_wh += delta
-                
-            last_reading = current_reading
-            
-        consumption_kwh = monthly_total_wh / 1000.0
+        # ✅ Simple resta entre el último y el primero
+        start_reading = readings_list[0]
+        end_reading = readings_list[-1]
+        delta_wh = end_reading - start_reading
+        delta_wh = max(delta_wh, 0)
+
+        consumption_kwh = delta_wh / 1000.0
         date_obj = datetime.datetime.strptime(doc["_id"], "%Y-%m")
         month_name_str = month_abbr_es.get(date_obj.month, "??")
 
@@ -464,13 +473,15 @@ async def get_device_details(
             consumption=round(consumption_kwh, 2)
         ))
 
+    # === FINAL RESPONSE ===
     device_info_data = {
         "deviceName": device_pg.name,
         "devEui": device_pg.dev_eui,
         "location": f"Centro: {device_pg.center_id}",
-        "applicationName": "N/A", "deviceProfileName": "N/A"
+        "applicationName": "N/A",
+        "deviceProfileName": "N/A"
     }
-    
+
     return DeviceDetailsResponse(
         deviceInfo=DeviceInfo(**device_info_data),
         price_kwh=price_from_db,
