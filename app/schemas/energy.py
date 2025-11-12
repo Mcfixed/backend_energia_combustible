@@ -110,6 +110,7 @@ class DeviceSummary(BaseModel):
     historicalData: Dict[str, DeviceHistoricalData]
     dailyConsumption: float
     alerts: List[DeviceAlert]
+    final_energy_counter: float
 
     class Config:
         populate_by_name = True

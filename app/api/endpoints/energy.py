@@ -24,9 +24,9 @@ CHILE_TZ = pytz.timezone("America/Santiago")
 
 router = APIRouter()
 ALL_HISTORICAL_FIELDS = {
-    "consumption": "object.agg_activeEnergy", # Acumulado
+    "consumption": "object.agg_activeEnergy",
     "power": "object.agg_activePower",
-    "voltage": "object.agg_voltage",
+    "voltage": "object.phaseA_voltage",
     "current": "object.agg_current",
     "powerFactor": "object.agg_powerFactor",
     "frequency": "object.agg_frequency",
@@ -35,9 +35,7 @@ ALL_HISTORICAL_FIELDS = {
     "thd": "object.agg_thdI", 
     "apparentEnergy": "object.agg_apparentEnergy",
     "reactiveEnergy": "object.agg_reactiveEnergy",
-    
-    
-    # --- Campos por Fase, se comentaran las fases restantes porque todas son monofasicas ---
+
     "power_a": "object.phaseA_activePower",
     "voltage_a": "object.phaseA_voltage",
     "current_a": "object.phaseA_current",
@@ -51,42 +49,9 @@ ALL_HISTORICAL_FIELDS = {
     "activeEnergy_a": "object.phaseA_activeEnergy",
     "activePower_a": "object.phaseA_activePower",
     "reactiveEnergy_a": "object.phaseA_reactiveEnergy",
-
-    #"power_b": "object.phaseB_activePower",
-    #"power_c": "object.phaseC_activePower",
-    #"voltage_b": "object.phaseB_voltage",
-    #"voltage_c": "object.phaseC_voltage",
-    #"current_b": "object.phaseB_current",
-    #"current_c": "object.phaseC_current",
-    #"powerFactor_b": "object.phaseB_powerFactor",
-    #"powerFactor_c": "object.phaseC_powerFactor",
-    #"reactivePower_b": "object.phaseB_reactivePower",
-    #"reactivePower_c": "object.phaseC_reactivePower",
-    #"apparentPower_b": "object.phaseB_apparentPower",
-    #"apparentPower_c": "object.phaseC_apparentPower",
-    # #"thd_i_b": "object.phaseB_thdI",
-    #"thd_i_c": "object.phaseC_thdI",
-    #"thd_u_b": "object.phaseB_thdU",
-    #"thd_u_c": "object.phaseC_thdU",
     
 }
 
-def _generate_mock_monthly_data(device_number: int) -> DeviceHistoricalData:
-    base_data = {
-        "consumption": [], "voltage": [], "current": [], "power": [],
-        "powerFactor": [], "frequency": [], "thd": [], "reactivePower": [], "apparentPower": []
-    }
-    labels = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
-    base_data["consumption"] = [{"time": m, "value": random.randint(500, 1500) + (device_number * 300)} for m in labels]
-    base_data["voltage"] = [{"time": m, "value": 230 + random.uniform(-2, 2)} for m in labels]
-    base_data["current"] = [{"time": m, "value": 50 + random.uniform(-10, 10)} for m in labels]
-    base_data["power"] = [{"time": m, "value": random.randint(500, 1500) + (device_number * 300)} for m in labels]
-    base_data["powerFactor"] = [{"time": m, "value": 90 + random.uniform(-5, 5)} for m in labels]
-    base_data["frequency"] = [{"time": m, "value": 50} for m in labels]
-    base_data["thd"] = [{"time": m, "value": 5 + random.uniform(0, 10)} for m in labels]
-    base_data["reactivePower"] = [{"time": m, "value": random.randint(100, 300) + (device_number * 50)} for m in labels]
-    base_data["apparentPower"] = [{"time": m, "value": random.randint(600, 1600) + (device_number * 300)} for m in labels]
-    return DeviceHistoricalData(**base_data)
 
 def _generate_mock_alerts(obj: dict) -> List[DeviceAlert]:
     alerts = []
@@ -115,27 +80,28 @@ def _generate_mock_alerts(obj: dict) -> List[DeviceAlert]:
 async def get_energy_summary(
     db: Session = Depends(get_db),
     current_user: user_model.User = Depends(get_current_active_user),
-    time_range: str = Query("1d", description="Rango de tiempo: 1d, 7d, 14d, 30d")
+    time_range: str = Query(
+        "1d", 
+        description="Rango de tiempo: 5m, 30m, 1h, 6h, 12h, 1d, 7d, 14d, 30d"
+    )
 ):
     """
-    Este endpoint entrega una lista de todos los dispositivos
-    a los que el usuario tiene acceso, combinando:
-    - Datos estáticos de PostgreSQL (Nombre, EUI)
-    - El último documento de MongoDB (Datos en tiempo real)
-    - El historial de consumo DIARIO (E_now - E_start)
+    Este endpoint entrega una lista de todos los dispositivos.
+    - Usa datos crudos para rangos <= 1 día.
+    - Usa agregación ($bucketAuto) para rangos > 1 día (7d, 14d, 30d).
     """
     
     mongo_collection = mongodb.db_energy[settings.MONGO_COLLECTION_NAME]
 
+    # 1. Obtener permisos de usuario
     user_company_links = db.query(UserCompany).filter(
         UserCompany.user_id == current_user.id
     ).all()
-    
     if not user_company_links:
         return [] 
-
     allowed_company_ids = [link.company_id for link in user_company_links]
 
+    # 2. Obtener dispositivos de Postgres
     devices_from_db = db.query(Device)\
         .join(center_model.Center)\
         .filter(
@@ -146,156 +112,171 @@ async def get_energy_summary(
     
     summary_list = []
 
+    # 3. Iterar por cada dispositivo
     for i, device_pg in enumerate(devices_from_db):
         latest_data_doc = await mongo_collection.find_one(
-            {
-                "deviceInfo.devEui": device_pg.dev_eui,
-                "object": { "$type": "object" } 
-            },
+            {"deviceInfo.devEui": device_pg.dev_eui, "object": { "$type": "object" }},
             sort=[("time", pymongo.DESCENDING)]
         )
 
         if not latest_data_doc:
             continue
 
+        # --- Lógica de Rango de Tiempo y Flag de Agregación ---
         end_time = datetime.datetime.now(datetime.timezone.utc)
+        USE_AGGREGATION = False # Por defecto, traemos datos crudos
         
-        if time_range == "7d":
+        # --- ¡CAMBIO SOLICITADO! ---
+        # Define el número de buckets deseado para la agregación
+        num_buckets = 1500
+        
+        if time_range == "5m":
+            start_time = end_time - datetime.timedelta(minutes=5)
+            days_to_query = 0
+        elif time_range == "30m":
+            start_time = end_time - datetime.timedelta(minutes=30)
+            days_to_query = 0
+        elif time_range == "1h":
+            start_time = end_time - datetime.timedelta(hours=1)
+            days_to_query = 0
+        elif time_range == "6h":
+            start_time = end_time - datetime.timedelta(hours=6)
+            days_to_query = 0
+        elif time_range == "12h":
+            start_time = end_time - datetime.timedelta(hours=12)
+            days_to_query = 0
+        
+        # --- RANGOS LARGOS (Aquí activamos la agregación) ---
+        elif time_range == "7d":
+            start_time = end_time - datetime.timedelta(days=7)
             days_to_query = 7
+            USE_AGGREGATION = True
         elif time_range == "14d":
+            start_time = end_time - datetime.timedelta(days=14)
             days_to_query = 14
+            USE_AGGREGATION = True
         elif time_range == "30d":
+            start_time = end_time - datetime.timedelta(days=30)
             days_to_query = 30
-        else:
-            days_to_query = 1  
+            USE_AGGREGATION = True
+        # --- Fin Rangos Largos ---
+            
+        else: # default 1d
+            start_time = end_time - datetime.timedelta(days=1)
+            days_to_query = 1
+            # Mantenemos USE_AGGREGATION = False para 1d
 
-            
-        start_time = end_time - datetime.timedelta(days=days_to_query)
-        """ "object.agg_activePower": 1,
-            "object.agg_voltage": 1,
-            "object.agg_current": 1,
-            "object.agg_powerFactor": 1,
-            "object.agg_frequency": 1,
-            "object.phaseA_thdI": 1,
-            "object.agg_reactivePower": 1,
-            "object.agg_apparentPower": 1,
-            "object.agg_activeEnergy": 1,
-            "object.phaseA_activeEnergy": 1,
-            "object.phaseB_activeEnergy": 1,
-            "object.phaseC_activeEnergy": 1 """
-        projection = {
-            "time": 1,
-            
+        
+        # --- CÁLCULO DE CONSUMO EFICIENTE (Se mantiene igual para todos) ---
+        base_query = {
+            "deviceInfo.devEui": device_pg.dev_eui,
+            "time": { "$gte": start_time, "$lte": end_time },
+            "object": { "$type": "object" }
         }
-        for field_path in ALL_HISTORICAL_FIELDS.values():
-            projection[field_path] = 1
+        projection_energy = {
+            "_id": 0,
+            "object.agg_activeEnergy": 1, "object.phaseA_activeEnergy": 1,
+            "object.phaseB_activeEnergy": 1, "object.phaseC_activeEnergy": 1,
+        }
         
-        projection["object.agg_activeEnergy"] = 1
-        projection["object.phaseA_activeEnergy"] = 1
-        projection["object.phaseB_activeEnergy"] = 1
-        projection["object.phaseC_activeEnergy"] = 1
+        first_doc = await mongo_collection.find_one(
+            base_query, projection=projection_energy, sort=[("time", pymongo.ASCENDING)]
+        )
+        last_doc = await mongo_collection.find_one(
+            base_query, projection=projection_energy, sort=[("time", pymongo.DESCENDING)]
+        )
+
+        total_agg_wh, total_a_wh, total_b_wh, total_c_wh = 0, 0, 0, 0
+        if first_doc and last_doc:
+            first_obj = first_doc.get("object", {})
+            last_obj = last_doc.get("object", {})
+            total_agg_wh = max(last_obj.get("agg_activeEnergy", 0) - first_obj.get("agg_activeEnergy", 0), 0)
+            total_a_wh = max(last_obj.get("phaseA_activeEnergy", 0) - first_obj.get("phaseA_activeEnergy", 0), 0)
+            total_b_wh = max(last_obj.get("phaseB_activeEnergy", 0) - first_obj.get("phaseB_activeEnergy", 0), 0)
+            total_c_wh = max(last_obj.get("phaseC_activeEnergy", 0) - first_obj.get("phaseC_activeEnergy", 0), 0)
         
-        historical_cursor = mongo_collection.find(
-            {
-                "deviceInfo.devEui": device_pg.dev_eui,
-                "time": { "$gte": start_time, "$lte": end_time },
-                "object": { "$type": "object" }
-            },
-            projection=projection
-        ).sort("time", pymongo.ASCENDING)
-
-        historical_docs = await historical_cursor.to_list(length=None) 
-
+        
+        # --- OBTENCIÓN DE DATOS HISTÓRICOS (HÍBRIDO) ---
         daily_data_raw = {field_key: [] for field_key in ALL_HISTORICAL_FIELDS.keys()}
 
-        for doc in historical_docs:
-            try:
-                time_utc = doc["time"]
-                
-                if time_utc and time_utc.tzinfo is None:
-                    time_utc = time_utc.replace(tzinfo=datetime.timezone.utc)
-                
-                time_santiago = time_utc.astimezone(CHILE_TZ)
-                
-                if days_to_query > 1:
-                    time_str = time_santiago.strftime("%d-%m") 
-                else:
-                    time_str = time_santiago.strftime("%H:%M")
-                
-                obj = doc.get("object", {})
-                
-                for field_key, field_path in ALL_HISTORICAL_FIELDS.items():
-
-                    key_in_obj = field_path.split('.', 1)[1]
-                    value = obj.get(key_in_obj, 0)
-                    daily_data_raw[field_key].append({"time": time_str, "value": value})
-            except Exception:
-                continue
-        
-        
-        """ total_agg_wh = 0
-        total_a_wh = 0
-        total_b_wh = 0
-        total_c_wh = 0
-
-        if len(historical_docs) < 2:
-            pass 
-        else:
-            last_obj = historical_docs[0].get("object", {})
-            last_agg = last_obj.get("agg_activeEnergy", 0)
-            last_a = last_obj.get("phaseA_activeEnergy", 0)
-            last_b = last_obj.get("phaseB_activeEnergy", 0)
-            last_c = last_obj.get("phaseC_activeEnergy", 0)
+        if USE_AGGREGATION:
+            # --- RUTA 1: AGREGACIÓN (7d, 14d, 30d) ---
             
-            for doc in historical_docs[1:]:
-                current_obj = doc.get("object", {})
-                
-                
-                current_agg = current_obj.get("agg_activeEnergy", 0)
-                delta_agg = current_agg - last_agg
-                if delta_agg > 0:  
-                    total_agg_wh += delta_agg
-                last_agg = current_agg 
+            bucket_outputs = {"time": {"$first": "$time"}}
+            for field_key, field_path in ALL_HISTORICAL_FIELDS.items():
+                if "Energy" in field_path or "consumption" in field_key:
+                    bucket_outputs[field_key] = {"$last": f"${field_path}"}
+                else:
+                    bucket_outputs[field_key] = {"$avg": f"${field_path}"}
 
-                current_a = current_obj.get("phaseA_activeEnergy", 0)
-                delta_a = current_a - last_a
-                if delta_a > 0:
-                    total_a_wh += delta_a
-                last_a = current_a
+            pipeline = [
+                {"$match": base_query},
+                {"$bucketAuto": {
+                    "groupBy": "$time",
+                    "buckets": num_buckets, # <-- Aquí se usa el valor 2000
+                    "output": bucket_outputs
+                }},
+                {"$sort": {"time": 1}}
+            ]
+            historical_cursor = mongo_collection.aggregate(pipeline)
+            aggregated_docs = await historical_cursor.to_list(length=None) 
 
-                current_b = current_obj.get("phaseB_activeEnergy", 0)
-                delta_b = current_b - last_b
-                if delta_b > 0:
-                    total_b_wh += delta_b
-                last_b = current_b
-                
-                current_c = current_obj.get("phaseC_activeEnergy", 0)
-                delta_c = current_c - last_c
-                if delta_c > 0:
-                    total_c_wh += delta_c
-                last_c = current_c """
-        total_agg_wh = 0
-        total_a_wh = 0
-        total_b_wh = 0
-        total_c_wh = 0
+            # Procesar docs agregados (loop rápido)
+            for doc in aggregated_docs:
+                try:
+                    time_utc = doc["time"]
+                    if time_utc and time_utc.tzinfo is None:
+                        time_utc = time_utc.replace(tzinfo=datetime.timezone.utc)
+                    time_santiago = time_utc.astimezone(CHILE_TZ)
+                    
+                    time_str = time_santiago.strftime("%d-%m") if days_to_query > 1 else time_santiago.strftime("%H:%M")
+                    
+                    for field_key in ALL_HISTORICAL_FIELDS.keys():
+                        value = doc.get(field_key, 0) 
+                        daily_data_raw[field_key].append({"time": time_str, "value": value})
+                except Exception:
+                    continue
 
-        if len(historical_docs) >= 2:
-            first_obj = historical_docs[0].get("object", {})
-            last_obj = historical_docs[-1].get("object", {})
+        else:
+            # --- RUTA 2: DATOS CRUDOS (5m, 30m, 1h, 6h, 12h, 1d) ---
+            
+            projection_historical = {"time": 1}
+            for field_path in ALL_HISTORICAL_FIELDS.values():
+                projection_historical[field_path] = 1
+            
+            historical_cursor = mongo_collection.find(
+                base_query,
+                projection=projection_historical
+            ).sort("time", pymongo.ASCENDING)
 
-            # Simple resta entre el último y el primero
-            total_agg_wh = last_obj.get("agg_activeEnergy", 0) - first_obj.get("agg_activeEnergy", 0)
-            total_a_wh = last_obj.get("phaseA_activeEnergy", 0) - first_obj.get("phaseA_activeEnergy", 0)
-            total_b_wh = last_obj.get("phaseB_activeEnergy", 0) - first_obj.get("phaseB_activeEnergy", 0)
-            total_c_wh = last_obj.get("phaseC_activeEnergy", 0) - first_obj.get("phaseC_activeEnergy", 0)
+            historical_docs = await historical_cursor.to_list(length=None) 
 
-            # Asegurar que no sean negativos (por reinicio del contador del medidor)
-            total_agg_wh = max(total_agg_wh, 0)
-            total_a_wh = max(total_a_wh, 0)
-            total_b_wh = max(total_b_wh, 0)
-            total_c_wh = max(total_c_wh, 0)        
+            # Procesar docs crudos (tu loop original)
+            for doc in historical_docs:
+                try:
+                    time_utc = doc["time"]
+                    if time_utc and time_utc.tzinfo is None:
+                        time_utc = time_utc.replace(tzinfo=datetime.timezone.utc)
+                    time_santiago = time_utc.astimezone(CHILE_TZ)
+                    
+                    time_str = time_santiago.strftime("%d-%m") if days_to_query > 1 else time_santiago.strftime("%H:%M")
+                    
+                    obj = doc.get("object", {})
+                    
+                    for field_key, field_path in ALL_HISTORICAL_FIELDS.items():
+                        key_in_obj = field_path.split('.', 1)[1]
+                        value = obj.get(key_in_obj, 0)
+                        daily_data_raw[field_key].append({"time": time_str, "value": value})
+                except Exception:
+                    continue
+        
+        # --- FIN DE LA BIFURCACIÓN ---
 
+        
+        # --- ENSAMBLAR LA RESPUESTA (Sin cambios) ---
         latest_obj = latest_data_doc.get("object", {}).copy()
+        
+        final_energy_counter = latest_obj.get("agg_activeEnergy", 0)
         
         latest_obj["agg_activeEnergy"] = total_agg_wh
         latest_obj["phaseA_activeEnergy"] = total_a_wh
@@ -304,7 +285,6 @@ async def get_energy_summary(
         
         historical_data = {
             "daily": DeviceHistoricalData(**daily_data_raw),
-            "monthly": _generate_mock_monthly_data(i) 
         }
         alerts = _generate_mock_alerts(latest_obj) 
         
@@ -325,8 +305,9 @@ async def get_energy_summary(
             "deviceInfo": device_info_data,
             "object": latest_obj,
             "historicalData": historical_data,
-            "dailyConsumption": latest_obj["agg_activeEnergy"], 
-            "alerts": alerts
+            "dailyConsumption": total_agg_wh,
+            "alerts": alerts,
+            "final_energy_counter": final_energy_counter
         }
         
         try:
